@@ -1,99 +1,88 @@
-import type { UpgradeId } from '../types';
+import { PLAYER_BASE_STATS, SECTOR_COUNT } from '../config/balance';
+import { UPGRADE_COST_GROWTH, UPGRADES, UPGRADE_IDS } from '../config/upgrades';
+import type { PlayerStats, UpgradeId } from '../types';
 
-export interface UpgradeDef {
-  id: UpgradeId;
-  label: string;
-  description: string;
-  baseCost: number;
-  maxLevel: number;
-  /** Texte de l'effet par niveau, pour l'interface. */
-  perLevel: string;
+export type UpgradeLevels = Record<UpgradeId, number>;
+
+export function emptyUpgradeLevels(): UpgradeLevels {
+  const levels = {} as UpgradeLevels;
+  for (const id of UPGRADE_IDS) levels[id] = 0;
+  return levels;
 }
 
-export const UPGRADE_COST_GROWTH = 1.6;
-export const UPGRADE_MAX_LEVEL = 5;
+export function getUpgradeDef(id: UpgradeId) {
+  const def = UPGRADES.find((u) => u.id === id);
+  if (!def) throw new Error(`Amélioration inconnue : ${id}`);
+  return def;
+}
 
-export const UPGRADES: readonly UpgradeDef[] = [
-  {
-    id: 'battery',
-    label: 'Batterie améliorée',
-    description: 'Augmente l’énergie maximale : tu restes plus longtemps sur le terrain.',
-    baseCost: 40,
-    maxLevel: UPGRADE_MAX_LEVEL,
-    perLevel: '+20 énergie max',
-  },
-  {
-    id: 'hull',
-    label: 'Coque renforcée',
-    description: 'Encaisse davantage de dégâts avant la destruction.',
-    baseCost: 50,
-    maxLevel: UPGRADE_MAX_LEVEL,
-    perLevel: '+25 points de coque',
-  },
-  {
-    id: 'engine',
-    label: 'Moteur plus rapide',
-    description: 'Vitesse de déplacement accrue, y compris pendant l’accélération.',
-    baseCost: 45,
-    maxLevel: UPGRADE_MAX_LEVEL,
-    perLevel: '+12 % de vitesse',
-  },
-  {
-    id: 'tool',
-    label: 'Outil de récupération',
-    description: 'Le rayon plasma inflige plus de dégâts aux drones ennemis.',
-    baseCost: 60,
-    maxLevel: UPGRADE_MAX_LEVEL,
-    perLevel: '+30 % de dégâts',
-  },
-  {
-    id: 'capacity',
-    label: 'Capacité de transport',
-    description: 'Une soute plus grande pour rapporter plus de butin par sortie.',
-    baseCost: 40,
-    maxLevel: UPGRADE_MAX_LEVEL,
-    perLevel: '+3 de capacité',
-  },
-  {
-    id: 'magnet',
-    label: 'Aimant de ressources',
-    description: 'Attire et récupère automatiquement les ressources proches.',
-    baseCost: 55,
-    maxLevel: UPGRADE_MAX_LEVEL,
-    perLevel: 'Rayon d’attraction croissant',
-  },
-  {
-    id: 'shield',
-    label: 'Bouclier temporaire',
-    description: 'Absorbe des dégâts puis se recharge s’il n’est plus touché.',
-    baseCost: 70,
-    maxLevel: UPGRADE_MAX_LEVEL,
-    perLevel: '+20 points de bouclier',
-  },
-  {
-    id: 'scanner',
-    label: 'Scanner de zones rares',
-    description: 'Affiche les composants et noyaux sur la mini-carte.',
-    baseCost: 65,
-    maxLevel: UPGRADE_MAX_LEVEL,
-    perLevel: 'Portée du scanner croissante',
-  },
-  {
-    id: 'multiplier',
-    label: 'Multiplicateur de score',
-    description: 'Tous les points de récupération et de combat sont augmentés.',
-    baseCost: 80,
-    maxLevel: UPGRADE_MAX_LEVEL,
-    perLevel: '+10 % de score',
-  },
-  {
-    id: 'efficiency',
-    label: 'Efficacité énergétique',
-    description: 'Réduit la consommation d’énergie de tous les systèmes.',
-    baseCost: 75,
-    maxLevel: UPGRADE_MAX_LEVEL,
-    perLevel: '−7 % de consommation',
-  },
-];
+/** Coût pour passer du niveau `level` au niveau suivant. */
+export function upgradeCost(id: UpgradeId, level: number): number {
+  return Math.round(getUpgradeDef(id).baseCost * Math.pow(UPGRADE_COST_GROWTH, level));
+}
 
-export const UPGRADE_IDS: readonly UpgradeId[] = UPGRADES.map((u) => u.id);
+const MAGNET_RADIUS = [0, 50, 80, 110, 140, 170];
+const SCANNER_RADIUS = [0, 320, 520, 720, 960, 1300];
+
+/** Statistiques du drone calculées à partir des niveaux d'amélioration. */
+export function computeStats(levels: UpgradeLevels): PlayerStats {
+  const b = PLAYER_BASE_STATS;
+  const lv = (id: UpgradeId) => Math.max(0, Math.min(levels[id] ?? 0, getUpgradeDef(id).maxLevel));
+  return {
+    maxHp: b.maxHp + 25 * lv('hull'),
+    maxEnergy: b.maxEnergy + 20 * lv('battery'),
+    speed: Math.round(b.speed * (1 + 0.12 * lv('engine'))),
+    toolDamage: Math.round(b.toolDamage * (1 + 0.3 * lv('tool')) * 10) / 10,
+    capacity: b.capacity + 3 * lv('capacity'),
+    pickupRange: b.pickupRange,
+    magnetRadius: MAGNET_RADIUS[lv('magnet')] ?? 0,
+    maxShield: 20 * lv('shield'),
+    scannerRadius: SCANNER_RADIUS[lv('scanner')] ?? 0,
+    scoreMultiplier: Math.round((1 + 0.1 * lv('multiplier')) * 100) / 100,
+    drainMultiplier: Math.round(Math.pow(0.93, lv('efficiency')) * 1000) / 1000,
+  };
+}
+
+/** Texte décrivant l'effet actuel d'une amélioration à un niveau donné. */
+export function describeEffect(id: UpgradeId, level: number): string {
+  const s = computeStats({ ...emptyUpgradeLevels(), [id]: level });
+  switch (id) {
+    case 'battery':
+      return `Énergie max : ${s.maxEnergy}`;
+    case 'hull':
+      return `Coque max : ${s.maxHp}`;
+    case 'engine':
+      return `Vitesse : ${s.speed} px/s`;
+    case 'tool':
+      return `Dégâts de l’outil : ${s.toolDamage}`;
+    case 'capacity':
+      return `Capacité de soute : ${s.capacity}`;
+    case 'magnet':
+      return s.magnetRadius > 0 ? `Rayon d’attraction : ${s.magnetRadius} px` : 'Aimant inactif';
+    case 'shield':
+      return s.maxShield > 0 ? `Bouclier : ${s.maxShield}` : 'Aucun bouclier';
+    case 'scanner':
+      return s.scannerRadius > 0 ? `Portée du scanner : ${s.scannerRadius} px` : 'Scanner inactif';
+    case 'multiplier':
+      return `Score : ×${s.scoreMultiplier.toFixed(2)}`;
+    case 'efficiency':
+      return `Consommation : ×${s.drainMultiplier.toFixed(2)}`;
+  }
+}
+
+export type PurchaseResult =
+  { ok: true; cost: number; newLevel: number } | { ok: false; reason: 'max' | 'credits' };
+
+export function tryPurchase(credits: number, levels: UpgradeLevels, id: UpgradeId): PurchaseResult {
+  const def = getUpgradeDef(id);
+  const level = levels[id] ?? 0;
+  if (level >= def.maxLevel) return { ok: false, reason: 'max' };
+  const cost = upgradeCost(id, level);
+  if (credits < cost) return { ok: false, reason: 'credits' };
+  return { ok: true, cost, newLevel: level + 1 };
+}
+
+/** Le secteur suivant est débloqué par une victoire dans le secteur courant. */
+export function unlockedAfterVictory(unlocked: number, sectorId: number): number {
+  return Math.min(SECTOR_COUNT, Math.max(unlocked, sectorId + 1));
+}
